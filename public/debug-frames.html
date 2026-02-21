@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  body { background: #222; color: #fff; font-family: monospace; margin: 20px; }
+  #controls { margin: 10px 0; }
+  #canvasWrap { position: relative; display: inline-block; border: 1px solid #555; }
+  #canvasWrap canvas { display: block; }
+  #overlay { position: absolute; top: 0; left: 0; cursor: crosshair; }
+  button { padding: 6px 14px; font-size: 14px; cursor: pointer; margin: 3px; }
+  select, input[type=number] { font-size: 14px; padding: 2px 6px; }
+  #frameList { margin: 10px 0; max-height: 300px; overflow-y: auto; }
+  .frame-entry { display: inline-block; margin: 4px; border: 2px solid #555; background: #333; vertical-align: top; padding: 4px; cursor: pointer; }
+  .frame-entry.selected { border-color: #0f0; background: #1a3a1a; }
+  .frame-entry canvas { display: block; }
+  .frame-entry .info { font-size: 11px; text-align: center; margin-top: 2px; }
+  #atlas-output { white-space: pre; font-size: 12px; background:#000; padding:10px; border:2px solid #f0f; margin:10px 0; max-height: 300px; overflow-y: auto; display: none; }
+  .color-idle { border-color: #0f0 !important; }
+  .color-walk { border-color: #ff0 !important; }
+  .color-attack { border-color: #f00 !important; }
+  .color-melee { border-color: #f80 !important; }
+  .color-cast { border-color: #08f !important; }
+  .color-projectile { border-color: #0ff !important; }
+  .color-death { border-color: #f0f !important; }
+  .size-btn { padding: 4px 10px; margin: 2px; border: 2px solid #555; background: #333; color: #fff; cursor: pointer; }
+  .size-btn.active { border-color: #0f0; background: #1a3a1a; }
+</style>
+</head>
+<body>
+<h2>Sprite Atlas Builder — Click to Stamp</h2>
+<div id="controls">
+  <b>Anim:</b>
+  <select id="animType">
+    <option value="idle">idle</option>
+    <option value="walk">walk</option>
+    <option value="attack">attack</option>
+    <option value="melee">melee</option>
+    <option value="cast">cast</option>
+    <option value="projectile">projectile</option>
+    <option value="death">death</option>
+  </select>
+  <b style="margin-left:10px;">Size:</b>
+  <button class="size-btn active" onclick="setSize(140,140,this)">140x140 (hero)</button>
+  <button class="size-btn" onclick="setSize(35,35,this)">35x35 (projectile)</button>
+  <button class="size-btn" onclick="setSize(0,0,this)">Custom</button>
+  <span id="customSize" style="display:none;">
+    W:<input type="number" id="customW" value="140" style="width:50px">
+    H:<input type="number" id="customH" value="140" style="width:50px">
+  </span>
+  <span id="nextLabel" style="margin-left:10px;">Next: idle_0</span>
+</div>
+<div id="controls2">
+  <button onclick="undoLast()">Undo Last</button>
+  <button onclick="clearAll()">Clear All</button>
+  |
+  Zoom: <input type="range" id="zoom" min="50" max="300" value="100" oninput="applyZoom()">
+  <span id="zoomPct">100%</span>
+</div>
+<div>Click on the sprite sheet to stamp a frame. The box is placed centered on your click.</div>
+<div id="canvasWrap">
+  <canvas id="sheet"></canvas>
+  <canvas id="overlay"></canvas>
+</div>
+<h3>Marked Frames (<span id="frameCount">0</span>):</h3>
+<div id="frameList"></div>
+<br>
+<button onclick="generateAtlas()" style="background:#0a0;color:#fff;font-weight:bold;padding:10px 20px;">Generate Atlas JSON</button>
+<button onclick="navigator.clipboard.writeText(document.getElementById('atlas-output').textContent).then(()=>this.textContent='Copied!');setTimeout(()=>this.textContent='Copy Atlas JSON',1500)">Copy Atlas JSON</button>
+<div id="atlas-output"></div>
+
+<script>
+const frames = []; // {type, index, x, y, w, h}
+const counters = { idle: 0, walk: 0, attack: 0, melee: 0, cast: 0, projectile: 0, death: 0 };
+let imgW = 0, imgH = 0;
+let scale = 1;
+let stampW = 140, stampH = 140;
+
+function setSize(w, h, btn) {
+  document.querySelectorAll('.size-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  if (w === 0) {
+    document.getElementById('customSize').style.display = 'inline';
+    stampW = parseInt(document.getElementById('customW').value) || 140;
+    stampH = parseInt(document.getElementById('customH').value) || 140;
+  } else {
+    document.getElementById('customSize').style.display = 'none';
+    stampW = w;
+    stampH = h;
+  }
+}
+
+document.getElementById('customW').addEventListener('input', () => {
+  stampW = parseInt(document.getElementById('customW').value) || 140;
+});
+document.getElementById('customH').addEventListener('input', () => {
+  stampH = parseInt(document.getElementById('customH').value) || 140;
+});
+
+const img = new Image();
+img.src = 'assets/archmage.png';
+img.onload = () => {
+  imgW = img.width;
+  imgH = img.height;
+  const sheet = document.getElementById('sheet');
+  sheet.width = imgW;
+  sheet.height = imgH;
+  sheet.getContext('2d').drawImage(img, 0, 0);
+
+  const overlay = document.getElementById('overlay');
+  overlay.width = imgW;
+  overlay.height = imgH;
+
+  applyZoom();
+  updateNextLabel();
+};
+
+function applyZoom() {
+  scale = parseInt(document.getElementById('zoom').value) / 100;
+  document.getElementById('zoomPct').textContent = Math.round(scale * 100) + '%';
+  const wrap = document.getElementById('canvasWrap');
+  wrap.style.width = Math.round(imgW * scale) + 'px';
+  wrap.style.height = Math.round(imgH * scale) + 'px';
+  document.getElementById('sheet').style.width = Math.round(imgW * scale) + 'px';
+  document.getElementById('sheet').style.height = Math.round(imgH * scale) + 'px';
+  document.getElementById('overlay').style.width = Math.round(imgW * scale) + 'px';
+  document.getElementById('overlay').style.height = Math.round(imgH * scale) + 'px';
+}
+
+function getPos(e) {
+  const rect = document.getElementById('overlay').getBoundingClientRect();
+  return {
+    x: Math.round((e.clientX - rect.left) / scale),
+    y: Math.round((e.clientY - rect.top) / scale)
+  };
+}
+
+// Show preview rectangle on hover
+document.getElementById('overlay').addEventListener('mousemove', (e) => {
+  const pos = getPos(e);
+  const ctx = document.getElementById('overlay').getContext('2d');
+  ctx.clearRect(0, 0, imgW, imgH);
+  redrawOverlay(ctx);
+  // Draw preview stamp centered on cursor
+  const x = Math.round(pos.x - stampW / 2);
+  const y = Math.round(pos.y - stampH / 2);
+  const colors = { idle: '#0f0', walk: '#ff0', attack: '#f00', melee: '#f80', cast: '#08f', projectile: '#0ff', death: '#f0f' };
+  const type = document.getElementById('animType').value;
+  ctx.strokeStyle = colors[type] || '#fff';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([5, 5]);
+  ctx.strokeRect(x, y, stampW, stampH);
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#fff';
+  ctx.font = '12px monospace';
+  ctx.fillText(`${stampW}x${stampH}`, x + 4, y - 4);
+});
+
+// Click to stamp
+document.getElementById('overlay').addEventListener('click', (e) => {
+  const pos = getPos(e);
+  const x = Math.round(pos.x - stampW / 2);
+  const y = Math.round(pos.y - stampH / 2);
+
+  const type = document.getElementById('animType').value;
+  const index = counters[type]++;
+  frames.push({ type, index, x, y, w: stampW, h: stampH });
+
+  redraw();
+  updateNextLabel();
+  renderFrameList();
+});
+
+function redrawOverlay(ctx) {
+  if (!ctx) ctx = document.getElementById('overlay').getContext('2d');
+  ctx.clearRect(0, 0, imgW, imgH);
+  const colors = { idle: '#0f0', walk: '#ff0', attack: '#f00', melee: '#f80', cast: '#08f', projectile: '#0ff', death: '#f0f' };
+  frames.forEach(f => {
+    ctx.strokeStyle = colors[f.type] || '#fff';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(f.x, f.y, f.w, f.h);
+    ctx.fillStyle = colors[f.type] || '#fff';
+    ctx.font = '12px monospace';
+    ctx.fillText(`${f.type}_${f.index}`, f.x + 2, f.y + 14);
+  });
+}
+
+function redraw() {
+  redrawOverlay();
+}
+
+function updateNextLabel() {
+  const type = document.getElementById('animType').value;
+  document.getElementById('nextLabel').textContent = `Next: ${type}_${counters[type]}`;
+}
+
+document.getElementById('animType').addEventListener('change', updateNextLabel);
+
+function undoLast() {
+  if (frames.length === 0) return;
+  const f = frames.pop();
+  counters[f.type]--;
+  redraw();
+  updateNextLabel();
+  renderFrameList();
+}
+
+function clearAll() {
+  frames.length = 0;
+  counters.idle = 0; counters.walk = 0; counters.attack = 0; counters.melee = 0; counters.cast = 0; counters.projectile = 0; counters.death = 0;
+  redraw();
+  updateNextLabel();
+  renderFrameList();
+}
+
+function renderFrameList() {
+  const list = document.getElementById('frameList');
+  list.innerHTML = '';
+  document.getElementById('frameCount').textContent = frames.length;
+  const colors = { idle: 'color-idle', walk: 'color-walk', attack: 'color-attack', melee: 'color-melee', cast: 'color-cast', projectile: 'color-projectile', death: 'color-death' };
+
+  frames.forEach((f, i) => {
+    const div = document.createElement('div');
+    div.className = `frame-entry ${colors[f.type] || ''}`;
+
+    const fc = document.createElement('canvas');
+    fc.width = f.w;
+    fc.height = f.h;
+    fc.getContext('2d').drawImage(img, f.x, f.y, f.w, f.h, 0, 0, f.w, f.h);
+    const maxDim = 80;
+    const s = Math.min(maxDim / f.w, maxDim / f.h, 1);
+    fc.style.width = Math.round(f.w * s) + 'px';
+    fc.style.height = Math.round(f.h * s) + 'px';
+    div.appendChild(fc);
+
+    const info = document.createElement('div');
+    info.className = 'info';
+    info.textContent = `${f.type}_${f.index}`;
+    div.appendChild(info);
+
+    const info2 = document.createElement('div');
+    info2.className = 'info';
+    info2.textContent = `${f.w}x${f.h}`;
+    div.appendChild(info2);
+
+    list.appendChild(div);
+  });
+}
+
+function generateAtlas() {
+  const atlasFrames = {};
+  frames.forEach(f => {
+    atlasFrames[`${f.type}_${f.index}`] = {
+      frame: { x: f.x, y: f.y, w: f.w, h: f.h },
+      rotated: false,
+      trimmed: false,
+      spriteSourceSize: { x: 0, y: 0, w: f.w, h: f.h },
+      sourceSize: { w: f.w, h: f.h }
+    };
+  });
+
+  const atlas = {
+    frames: atlasFrames,
+    meta: {
+      app: "manual-atlas-builder",
+      version: "1.0",
+      image: "archmage.png",
+      format: "RGBA8888",
+      size: { w: imgW, h: imgH },
+      scale: "1"
+    }
+  };
+
+  const output = document.getElementById('atlas-output');
+  output.style.display = 'block';
+  output.textContent = JSON.stringify(atlas, null, 2);
+}
+</script>
+</body>
+</html>

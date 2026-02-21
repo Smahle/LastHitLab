@@ -1,0 +1,9 @@
+{
+  "name": "Last Hit Trainer",
+  "short_name": "LastHit",
+  "start_url": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#111111",
+  "theme_color": "#111111"
+}
