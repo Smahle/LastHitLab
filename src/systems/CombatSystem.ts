@@ -18,18 +18,27 @@ import {
   MELEE_CREEP_GOLD_BASE,
   RANGED_CREEP_GOLD_BASE,
   CREEP_GOLD_VARIANCE,
-  SEPARATION_STRENGTH,
 } from "../config/constants";
 import type { GameState, UnitData, UnitEntry } from "../types";
 import type { EffectsSystem } from "./EffectsSystem";
 import { spawnPos, targetPos } from "../helpers";
 
 export class CombatSystem {
+  /**
+   * Physics group that owns all in-flight projectile sprites.
+   * Created by GameScene and passed in; `null` only in unit-test contexts
+   * where no Phaser scene is available.
+   */
+  readonly projectilesGroup: Phaser.Physics.Arcade.Group | null;
+
   constructor(
     private scene: Phaser.Scene,
     private state: GameState,
     private effects: EffectsSystem,
-  ) {}
+    projectilesGroup: Phaser.Physics.Arcade.Group | null = null,
+  ) {
+    this.projectilesGroup = projectilesGroup;
+  }
 
   // ── Public update entry points ─────────────────────────────────────────
 
@@ -94,7 +103,6 @@ export class CombatSystem {
     } else {
       this.tickCreepWithoutTarget(u);
     }
-    this.applySeparation(u);
   }
 
   /** Creep has a live target: chase it or attack if in range. */
@@ -341,7 +349,7 @@ export class CombatSystem {
           d.team === "A" ? 0x00ffff : 0xff00ff,
         );
       } else if (d.stats.projectileSpeed > 0) {
-        this.createProjectile(u, target, damage);
+        this.spawnProjectile(u, target, damage);
       } else {
         this.applyDamageInstant(d, target, damage);
       }
@@ -503,125 +511,52 @@ export class CombatSystem {
 
   // ── Projectiles ────────────────────────────────────────────────────────
 
-  private createProjectile(
+  /**
+   * Fire a physics-based projectile from the attacker toward the target.
+   * The projectile moves autonomously via Arcade physics velocity; the
+   * overlap callback in GameScene resolves the hit on contact.
+   */
+  private spawnProjectile(
     attacker: UnitEntry,
     target: UnitEntry,
     damage: number,
   ): void {
-    const dist = Phaser.Math.Distance.Between(
+    if (!this.projectilesGroup) return;
+
+    const proj = this.projectilesGroup.get(
       attacker.sprite.x,
       attacker.sprite.y,
-      target.sprite.x,
-      target.sprite.y,
-    );
-    const id = `proj-${++this.state.idCounter}`;
+      "projectile",
+    ) as Phaser.Physics.Arcade.Sprite | null;
+    if (!proj) return;
+
     const color =
       attacker.data.team === "A"
         ? COLORS.TEAM_A_PROJECTILE
         : COLORS.TEAM_B_PROJECTILE;
-    const gfx = this.scene.add
-      .circle(attacker.sprite.x, attacker.sprite.y, 6, color)
-      .setDepth(15);
 
-    this.state.projectiles.set(id, {
-      gfx,
-      data: {
-        id,
-        attackerId: attacker.data.id,
-        targetId: target.data.id,
-        team: attacker.data.team,
-        startX: attacker.sprite.x,
-        startY: attacker.sprite.y,
-        damage,
-        speed: attacker.data.stats.projectileSpeed,
-        progress: 0,
-        arcHeight: Math.min(dist * 0.25, 80),
-        lifeTime: 0,
-      },
-    });
-  }
+    proj.setActive(true).setVisible(true);
+    proj.setTint(color);
+    proj.setDepth(15);
+    (proj.body as Phaser.Physics.Arcade.Body).setEnable(true);
 
-  /** Advance all in-flight projectiles; resolve hits when they reach the target. */
-  updateProjectiles(dt: number): void {
-    const toRemove: string[] = [];
-    this.state.projectiles.forEach((p, id) => {
-      p.data.lifeTime += dt;
-      const target = this.state.units.get(p.data.targetId);
-      if (!target || target.data.hp <= 0 || p.data.lifeTime > 3) {
-        toRemove.push(id);
-        return;
-      }
+    proj.setData("attackerId", attacker.data.id);
+    proj.setData("damage", damage);
+    proj.setData("team", attacker.data.team);
 
-      const { x: tx, y: ty } = target.sprite;
-      const totalDist = Phaser.Math.Distance.Between(
-        p.data.startX,
-        p.data.startY,
-        tx,
-        ty,
-      );
-      p.data.progress = Math.min(
-        1,
-        p.data.progress + (p.data.speed * dt) / Math.max(totalDist, 1),
-      );
+    this.scene.physics.moveToObject(
+      proj,
+      target.sprite,
+      attacker.data.stats.projectileSpeed,
+    );
 
-      if (p.data.progress >= 1) {
-        this.applyDamageFromProjectile(
-          p.data.attackerId,
-          target,
-          p.data.damage,
-        );
-        toRemove.push(id);
-      } else {
-        // Lerp along the line and apply a perpendicular arc offset
-        const t = p.data.progress;
-        const lx = p.data.startX + (tx - p.data.startX) * t;
-        const ly = p.data.startY + (ty - p.data.startY) * t;
-        const arcOffset = p.data.arcHeight * Math.sin(t * Math.PI);
-        const pdx = tx - p.data.startX;
-        const pdy = ty - p.data.startY;
-        const pDist = Math.hypot(pdx, pdy) || 1;
-        const arcDir = p.data.team === "A" ? -1 : 1;
-        p.gfx.x = lx + (-pdy / pDist) * arcOffset * arcDir;
-        p.gfx.y = ly + (pdx / pDist) * arcOffset * arcDir;
-      }
-    });
-
-    toRemove.forEach((id) => {
-      this.state.projectiles.get(id)?.gfx.destroy();
-      this.state.projectiles.delete(id);
+    // Auto-expire after 3 seconds in case the projectile misses
+    this.scene.time.delayedCall(3000, () => {
+      if (proj.active) this.projectilesGroup!.killAndHide(proj);
     });
   }
 
   // ── Utilities ──────────────────────────────────────────────────────────
-
-  /**
-   * Push this unit away from any same-team unit it overlaps with.
-   * Applied after movement velocity is set so it adds on top.
-   */
-  private applySeparation(u: UnitEntry): void {
-    let sx = 0,
-      sy = 0;
-    this.state.units.forEach((other) => {
-      if (other.data.id === u.data.id || other.data.hp <= 0) return;
-      if (other.data.team !== u.data.team) return;
-      const dx = u.sprite.x - other.sprite.x;
-      const dy = u.sprite.y - other.sprite.y;
-      const dist = Math.hypot(dx, dy);
-      const minDist = u.data.radius + other.data.radius + 4;
-      if (dist < minDist && dist > 0) {
-        const overlap = (minDist - dist) / minDist;
-        sx += (dx / dist) * overlap;
-        sy += (dy / dist) * overlap;
-      }
-    });
-    if (sx !== 0 || sy !== 0) {
-      const body = u.sprite.body as Phaser.Physics.Arcade.Body;
-      body.setVelocity(
-        body.velocity.x + sx * SEPARATION_STRENGTH,
-        body.velocity.y + sy * SEPARATION_STRENGTH,
-      );
-    }
-  }
 
   /** Typed shorthand for Arcade-physics velocity to avoid repeated casts. */
   private setVelocity(u: UnitEntry, vx: number, vy: number): void {

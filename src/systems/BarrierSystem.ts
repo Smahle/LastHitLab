@@ -1,3 +1,4 @@
+import Phaser from "phaser";
 import { GAME_WIDTH, GAME_HEIGHT, COLORS } from "../config/constants";
 import type { GameState, Team } from "../types";
 import type { EffectsSystem } from "./EffectsSystem";
@@ -30,29 +31,49 @@ export class BarrierSystem {
     ];
   }
 
-  check(prevPos: Map<string, { x: number; y: number }>): void {
+  /**
+   * Populate `group` with a dense chain of small static sensor bodies
+   * covering each barrier line within the visible game area.
+   *
+   * Because Arcade Physics static bodies don't support rotation for AABB
+   * collision, this fallback places 20×20 sensors every 18 px along the
+   * line instead of using a single rotated rectangle.
+   */
+  createSensors(group: Phaser.Physics.Arcade.StaticGroup): void {
+    const margin = 30;
+
     for (const b of this.state.barriers) {
-      if (b.hitsRemaining <= 0) continue;
-      const enemyTeam: Team = b.team === "A" ? "B" : "A";
+      const dx = b.x2 - b.x1;
+      const dy = b.y2 - b.y1;
+      const len = Math.hypot(dx, dy);
+      const count = Math.ceil(len / 18) + 1;
 
-      this.state.units.forEach((u) => {
-        if (u.data.team !== enemyTeam || u.data.unitType !== "creep" || u.data.hp <= 0) return;
-        const prev = prevPos.get(u.data.id);
-        if (!prev) return;
+      for (let i = 0; i < count; i++) {
+        const t = i / (count - 1);
+        const x = b.x1 + dx * t;
+        const y = b.y1 + dy * t;
 
-        const before = this.lineSide(prev.x, prev.y, b.x1, b.y1, b.x2, b.y2);
-        const after = this.lineSide(u.sprite.x, u.sprite.y, b.x1, b.y1, b.x2, b.y2);
-
-        if (before * after < 0) {
-          u.data.hp = 0;
-          b.hitsRemaining--;
-          this.effects.addFloatingText(
-            u.sprite.x, u.sprite.y - 20,
-            "BLOCKED!",
-            b.team === "A" ? "#4fc3f7" : "#ff6b6b"
-          );
+        // Skip sensors that fall entirely outside the visible canvas
+        if (
+          x < -margin ||
+          x > GAME_WIDTH + margin ||
+          y < -margin ||
+          y > GAME_HEIGHT + margin
+        ) {
+          continue;
         }
-      });
+
+        // "__DEFAULT" is Phaser's built-in 32×32 white texture; set invisible
+        const sensor = group.create(
+          x,
+          y,
+          "__DEFAULT",
+        ) as Phaser.Physics.Arcade.Image;
+        sensor.setAlpha(0);
+        (sensor.body as Phaser.Physics.Arcade.StaticBody).setSize(20, 20, true);
+        sensor.setData("barrierTeam", b.team as Team);
+        sensor.setData("barrier", b);
+      }
     }
   }
 
@@ -67,9 +88,5 @@ export class BarrierSystem {
       this.state.barrierGfx.lineTo(b.x2, b.y2);
       this.state.barrierGfx.strokePath();
     }
-  }
-
-  private lineSide(px: number, py: number, x1: number, y1: number, x2: number, y2: number): number {
-    return (x2 - x1) * (py - y1) - (y2 - y1) * (px - x1);
   }
 }

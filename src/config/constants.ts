@@ -15,8 +15,6 @@ export const AGGRO_RANGE_BONUS = 200;
 export const GOAL_REACH_DIST = 50;
 /** Minimum remaining distance before a unit stops moving. */
 export const MOVEMENT_STOP_DIST = 5;
-/** Push-apart speed (px/s) applied when friendly units overlap. */
-export const SEPARATION_STRENGTH = 120;
 /** attackRange threshold that distinguishes ranged from melee creeps. */
 export const RANGED_RANGE_THRESHOLD = 200;
 

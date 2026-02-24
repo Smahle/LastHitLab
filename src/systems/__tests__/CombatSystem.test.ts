@@ -64,7 +64,6 @@ function makeEntry(data: UnitData): UnitEntry {
 function makeState(): GameState {
   return {
     units: new Map(),
-    projectiles: new Map(),
     hpBars: new Map(),
     barriers: [],
     barrierGfx: {} as never,

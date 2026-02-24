@@ -2,7 +2,7 @@ import Phaser from "phaser";
 import { GAME_WIDTH, GAME_HEIGHT, PICK_MARGIN } from "../config/constants";
 import { HERO_STATS } from "../config/unitStats";
 import type { Stats } from "../config/unitStats";
-import type { GameState, Team, UnitType, UnitData, UnitEntry } from "../types";
+import type { GameState, Team, UnitType, UnitData, UnitEntry, Barrier } from "../types";
 import { EffectsSystem } from "../systems/EffectsSystem";
 import { CombatSystem } from "../systems/CombatSystem";
 import { WaveSystem } from "../systems/WaveSystem";
@@ -18,6 +18,11 @@ export class GameScene extends Phaser.Scene {
   private hud!: HUD;
   private targetingMode = false;
 
+  // ── Physics groups ────────────────────────────────────────────────────
+  private unitsGroup!: Phaser.Physics.Arcade.Group;
+  private projectilesGroup!: Phaser.Physics.Arcade.Group;
+  private barrierSensorsGroup!: Phaser.Physics.Arcade.StaticGroup;
+
   constructor() {
     super({ key: "GameScene" });
   }
@@ -28,9 +33,30 @@ export class GameScene extends Phaser.Scene {
   }
 
   create() {
+    // Generate a small circle texture used for projectile sprites
+    const g = this.make.graphics({ x: 0, y: 0 }, false);
+    g.fillStyle(0xffffff);
+    g.fillCircle(6, 6, 6);
+    g.generateTexture("projectile", 12, 12);
+    g.destroy();
+
+    // ── World bounds ────────────────────────────────────────────────────
+    this.physics.world.setBounds(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+    // ── Physics groups ──────────────────────────────────────────────────
+    this.unitsGroup = this.physics.add.group();
+
+    // Projectile pool — 200 sprites, no per-child update needed
+    this.projectilesGroup = this.physics.add.group({
+      maxSize: 200,
+      runChildUpdate: false,
+    });
+
+    this.barrierSensorsGroup = this.physics.add.staticGroup();
+
+    // ── Game state ──────────────────────────────────────────────────────
     this.state = {
       units: new Map(),
-      projectiles: new Map(),
       hpBars: new Map(),
       barriers: [],
       barrierGfx: this.add.graphics(),
@@ -49,19 +75,42 @@ export class GameScene extends Phaser.Scene {
       .setDisplaySize(GAME_WIDTH, GAME_HEIGHT)
       .setDepth(-1);
 
+    // ── Systems ─────────────────────────────────────────────────────────
     this.effects = new EffectsSystem(this, this.state);
-    this.combat = new CombatSystem(this, this.state, this.effects);
+    this.combat = new CombatSystem(this, this.state, this.effects, this.projectilesGroup);
     this.barrier = new BarrierSystem(this.state, this.effects);
     this.waves = new WaveSystem(this.state, (opts) => this.createUnit(opts));
     this.hud = new HUD(this, this.state);
 
+    // ── Colliders & overlaps ────────────────────────────────────────────
+    this.physics.add.collider(this.unitsGroup, this.unitsGroup);
+
+    // Projectile hits: overlap resolves damage via callback
+    this.physics.add.overlap(
+      this.projectilesGroup,
+      this.unitsGroup,
+      this.onProjectileHit as Phaser.Types.Physics.Arcade.ArcadePhysicsCallback,
+      undefined,
+      this,
+    );
+
+    // Barrier sensors: creeps that enter the sensor zone are killed
+    this.physics.add.overlap(
+      this.barrierSensorsGroup,
+      this.unitsGroup,
+      this.onBarrierTouch as Phaser.Types.Physics.Arcade.ArcadePhysicsCallback,
+      undefined,
+      this,
+    );
+
     this.createAnimations();
     this.spawnHeroes();
     this.barrier.init();
+    this.barrier.createSensors(this.barrierSensorsGroup);
     this.waves.start();
     this.hud.create(
       () => this.hud.toggleShop(),
-      () => { this.targetingMode = !this.targetingMode; }
+      () => { this.targetingMode = !this.targetingMode; },
     );
 
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
@@ -103,16 +152,11 @@ export class GameScene extends Phaser.Scene {
 
     this.waves.update(dt);
 
-    const prevPos = new Map<string, { x: number; y: number }>();
-    this.state.units.forEach((u, id) => prevPos.set(id, { x: u.sprite.x, y: u.sprite.y }));
-
     this.state.units.forEach((u) => {
       if (u.data.hp <= 0) return;
       this.combat.updateUnit(u, dt);
     });
 
-    this.combat.updateProjectiles(dt);
-    this.barrier.check(prevPos);
     this.updateHPBars();
     this.barrier.draw();
     this.effects.updateFloatingTexts(dt);
@@ -157,15 +201,26 @@ export class GameScene extends Phaser.Scene {
 
     const sprite = this.physics.add.sprite(opts.x, opts.y, "archmage", "idle_0");
 
+    // Set up circular physics body for all units
+    const body = sprite.body as Phaser.Physics.Arcade.Body;
+    body.setCircle(
+      opts.radius,
+      sprite.width / 2 - opts.radius,
+      sprite.height / 2 - opts.radius,
+    );
+    body.setAllowGravity(false);
+    body.setCollideWorldBounds(true);
+
+    // Tag sprite so overlap callbacks can look up the unit
+    sprite.setData("unitId", opts.id);
+    sprite.setData("team", opts.team);
+
     if (opts.unitType === "hero") {
       sprite.setScale(0.35).setDepth(10);
       sprite.play("anim-idle");
       if (opts.team === "B") sprite.setFlipX(true);
-      (sprite.body as Phaser.Physics.Arcade.Body).setCircle(
-        opts.radius,
-        sprite.width / 2 - opts.radius,
-        sprite.height / 2 - opts.radius,
-      );
+      // Heroes don't move; make them immovable so creeps are deflected
+      body.setImmovable(true);
     } else {
       const isRanged = opts.stats.attackRange > 100;
       const tint = opts.team === "A"
@@ -175,6 +230,8 @@ export class GameScene extends Phaser.Scene {
       sprite.play("anim-walk");
       if (opts.team === "B") sprite.setFlipX(true);
     }
+
+    this.unitsGroup.add(sprite);
 
     const barW = opts.radius * 2;
     this.state.hpBars.set(opts.id, {
@@ -199,6 +256,89 @@ export class GameScene extends Phaser.Scene {
       stats: { ...HERO_STATS }, gold: 500,
     });
   }
+
+  // ── Overlap callbacks ──────────────────────────────────────────────────
+
+  /**
+   * Called by Arcade Physics when a projectile overlaps a unit sprite.
+   * Ignores friendly fire; applies damage and returns the projectile to
+   * the pool.
+   */
+  private onProjectileHit(
+    projectile: Phaser.GameObjects.GameObject,
+    unitSprite: Phaser.GameObjects.GameObject,
+  ): void {
+    const proj = projectile as Phaser.Physics.Arcade.Sprite;
+    const sprite = unitSprite as Phaser.Physics.Arcade.Sprite;
+
+    const projTeam = proj.getData("team") as Team;
+    const unitTeam = sprite.getData("team") as Team;
+
+    // Ignore friendly fire
+    if (projTeam === unitTeam) return;
+
+    const attackerId = proj.getData("attackerId") as string;
+    const damage = proj.getData("damage") as number;
+    const unitId = sprite.getData("unitId") as string;
+
+    const unit = this.state.units.get(unitId);
+    if (!unit || unit.data.hp <= 0) {
+      this.projectilesGroup.killAndHide(proj);
+      return;
+    }
+
+    this.combat.applyDamageFromProjectile(attackerId, unit, damage);
+    this.projectilesGroup.killAndHide(proj);
+  }
+
+  /**
+   * Called by Arcade Physics when a barrier sensor overlaps a unit sprite.
+   * Only enemy creeps are affected; each hit decrements hitsRemaining and
+   * kills the creep. Sensors for an exhausted barrier are disabled.
+   */
+  private onBarrierTouch(
+    sensor: Phaser.GameObjects.GameObject,
+    unitSprite: Phaser.GameObjects.GameObject,
+  ): void {
+    const sensorImg = sensor as Phaser.Physics.Arcade.Image;
+    const sprite = unitSprite as Phaser.Physics.Arcade.Sprite;
+
+    const barrierTeam = sensorImg.getData("barrierTeam") as Team;
+    const unitTeam = sprite.getData("team") as Team;
+
+    // Only affect enemy creeps
+    if (unitTeam === barrierTeam) return;
+
+    const unitId = sprite.getData("unitId") as string;
+    const unit = this.state.units.get(unitId);
+    if (!unit || unit.data.hp <= 0 || unit.data.unitType !== "creep") return;
+
+    const b = sensorImg.getData("barrier") as Barrier;
+    if (b.hitsRemaining <= 0) return;
+
+    unit.data.hp = 0;
+    b.hitsRemaining--;
+
+    this.effects.addFloatingText(
+      sprite.x,
+      sprite.y - 20,
+      "BLOCKED!",
+      barrierTeam === "A" ? "#4fc3f7" : "#ff6b6b",
+    );
+
+    // Disable all sensors for this barrier when its charges are exhausted
+    if (b.hitsRemaining <= 0) {
+      this.barrierSensorsGroup.getChildren().forEach((child) => {
+        const img = child as Phaser.Physics.Arcade.Image;
+        if (img.getData("barrier") === b) {
+          img.setActive(false).setVisible(false);
+          (img.body as Phaser.Physics.Arcade.StaticBody).enable = false;
+        }
+      });
+    }
+  }
+
+  // ── Input ──────────────────────────────────────────────────────────────
 
   private handleClick(x: number, y: number) {
     const heroA = this.state.units.get("hero-A");
@@ -244,6 +384,8 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  // ── HP bars & cleanup ──────────────────────────────────────────────────
+
   private updateHPBars() {
     this.state.units.forEach((u) => {
       const bar = this.state.hpBars.get(u.data.id);
@@ -265,6 +407,7 @@ export class GameScene extends Phaser.Scene {
     toRemove.forEach((id) => {
       const u = this.state.units.get(id);
       if (u) {
+        // sprite.destroy() also removes the body from all physics groups
         u.sprite.destroy();
         const bar = this.state.hpBars.get(id);
         if (bar) { bar.bg.destroy(); bar.fg.destroy(); }

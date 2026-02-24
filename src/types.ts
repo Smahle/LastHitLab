@@ -30,20 +30,6 @@ export interface UnitData {
   rapidFireDuration: number;
 }
 
-export interface ProjectileData {
-  id: string;
-  attackerId: string;
-  targetId: string;
-  team: Team;
-  startX: number;
-  startY: number;
-  damage: number;
-  speed: number;
-  progress: number;
-  arcHeight: number;
-  lifeTime: number;
-}
-
 export interface Barrier {
   team: Team;
   x1: number;
@@ -69,12 +55,10 @@ export interface LaserBeam {
 }
 
 export type UnitEntry = { sprite: Phaser.Physics.Arcade.Sprite; data: UnitData };
-export type ProjectileEntry = { gfx: Phaser.GameObjects.Arc; data: ProjectileData };
 export type HPBarEntry = { bg: Phaser.GameObjects.Rectangle; fg: Phaser.GameObjects.Rectangle };
 
 export interface GameState {
   units: Map<string, UnitEntry>;
-  projectiles: Map<string, ProjectileEntry>;
   hpBars: Map<string, HPBarEntry>;
   barriers: Barrier[];
   barrierGfx: Phaser.GameObjects.Graphics;
