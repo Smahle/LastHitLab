@@ -157,6 +157,9 @@ export class GameScene extends Phaser.Scene {
       this.combat.updateUnit(u, dt);
     });
 
+    // steer any in-flight projectiles toward their targets
+    this.combat.updateProjectiles(dt);
+
     this.updateHPBars();
     this.barrier.draw();
     this.effects.updateFloatingTexts(dt);
@@ -279,7 +282,11 @@ export class GameScene extends Phaser.Scene {
 
     const attackerId = proj.getData("attackerId") as string;
     const damage = proj.getData("damage") as number;
+    const intended = proj.getData("targetId") as string | undefined;
     const unitId = sprite.getData("unitId") as string;
+
+    // only the designated target should be affected by this projectile
+    if (intended && unitId !== intended) return;
 
     const unit = this.state.units.get(unitId);
     if (!unit || unit.data.hp <= 0) {

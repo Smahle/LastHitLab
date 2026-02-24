@@ -8,6 +8,22 @@ vi.mock("phaser", () => ({
         Between: (x1: number, y1: number, x2: number, y2: number) =>
           Math.hypot(x2 - x1, y2 - y1),
       },
+      Angle: {
+        Between: (x1: number, y1: number, x2: number, y2: number) =>
+          Math.atan2(y2 - y1, x2 - x1),
+        RotateTo: (from: number, to: number, max: number) => {
+          // wrap difference to [-π, π]
+          const diff = ((((to - from) % (2 * Math.PI)) + 2 * Math.PI) %
+            (2 * Math.PI)) -
+            Math.PI;
+          const amt = Math.sign(diff) * Math.min(Math.abs(diff), max);
+          return from + amt;
+        },
+        Wrap: (angle: number) => {
+          const pi2 = Math.PI * 2;
+          return ((angle % pi2) + pi2) % pi2;
+        },
+      },
     },
   },
 }));
@@ -84,7 +100,12 @@ function makeEffects(): EffectsSystem {
 }
 
 function makeCombat(state: GameState, effects: EffectsSystem): CombatSystem {
-  return new CombatSystem({} as never, state, effects);
+  // minimal scene stub with time and physics namespaces used by CombatSystem
+  const sceneStub: any = {
+    time: { delayedCall: vi.fn() },
+    physics: { moveToObject: vi.fn() },
+  };
+  return new CombatSystem(sceneStub, state, effects);
 }
 
 // ── calculateDamage ────────────────────────────────────────────────────────
@@ -178,6 +199,112 @@ describe("updateTimers (via updateUnit)", () => {
     combat.updateUnit(u, 0.1);
     expect(d.rapidFireActive).toBe(false);
     expect(d.rapidFireDuration).toBe(0);
+  });
+});
+
+// ── projectile behaviour and utilities ───────────────────────────────────
+
+describe("projectile helpers", () => {
+  let state: GameState;
+  let effects: EffectsSystem;
+  let combat: CombatSystem;
+
+  beforeEach(() => {
+    state = makeState();
+    effects = makeEffects();
+    combat = makeCombat(state, effects);
+  });
+
+  it("stores targetId and speed when spawning", () => {
+    const atk = makeData();
+    const tgtData = makeData({ id: "tgt", team: "B" });
+    const tgt: UnitEntry = makeEntry(tgtData);
+    state.units.set(tgtData.id, tgt);
+
+    // create fake projectile and group
+    const proj: any = {
+      x: 0,
+      y: 0,
+      active: true,
+      getData: vi.fn().mockReturnValue(undefined),
+      setData: vi.fn(),
+      setActive: vi.fn().mockReturnThis(),
+      setVisible: vi.fn().mockReturnThis(),
+      setTint: vi.fn().mockReturnThis(),
+      setDepth: vi.fn().mockReturnThis(),
+      body: { setVelocity: vi.fn(), setEnable: vi.fn() },
+    };
+    combat.projectilesGroup = {
+      get: vi.fn().mockReturnValue(proj),
+    } as any;
+
+    atk.stats.projectileSpeed = 10;
+    combat.spawnProjectile({ data: atk, sprite: proj } as any, tgt, 5);
+
+    expect(proj.setData).toHaveBeenCalledWith("targetId", tgtData.id);
+    expect(proj.setData).toHaveBeenCalledWith("speed", 10);
+    expect(proj.setData).toHaveBeenCalledWith("age", 0);
+    // initial velocity should be set toward target (same spot => zero)
+    expect(proj.body.setVelocity).toHaveBeenCalled();
+  });
+
+  it("updateProjectiles steers toward living target", () => {
+    const proj: any = {
+      x: 0,
+      y: 0,
+      active: true,
+      getData: vi.fn((key: string) => {
+        if (key === "targetId") return "tgt";
+        if (key === "speed") return 5;
+        if (key === "age") return 0;
+        return undefined;
+      }),
+      setData: vi.fn(),
+      body: { velocity: { x: 1, y: 0 }, setVelocity: vi.fn() },
+    };
+    // create a fake unit entry with a sprite located to the right of the
+    // projectile so steering will modify the velocity angle
+    const targetEntry: UnitEntry = {
+      data: makeData({ id: "tgt", team: "B" }),
+      sprite: { x: 10, y: 0 } as any,
+    } as any;
+    state.units.set("tgt", targetEntry);
+
+    combat.projectilesGroup = { getChildren: () => [proj], killAndHide: vi.fn() } as any;
+
+    combat.updateProjectiles(1 / 60);
+
+    expect(proj.body.setVelocity).toHaveBeenCalled();
+    // age should be bumped
+    expect(proj.setData).toHaveBeenCalledWith("age", expect.any(Number));
+  });
+
+  it("kills projectile when target is dead", () => {
+    const proj: any = {
+      x: 0,
+      y: 0,
+      active: true,
+      getData: vi.fn((key: string) => {
+        if (key === "targetId") return "tgt";
+        if (key === "speed") return 5;
+        if (key === "age") return 0;
+        return undefined;
+      }),
+      setData: vi.fn(),
+      body: { velocity: { x: 0, y: 0 }, setVelocity: vi.fn() },
+    };
+    // add entry with hp=0 to simulate dead target
+    const deadEntry: UnitEntry = {
+      data: makeData({ id: "tgt", team: "B", hp: 0 }),
+      sprite: { x: 0, y: 0 } as any,
+    } as any;
+    state.units.set("tgt", deadEntry);
+
+    const killSpy = vi.fn();
+    combat.projectilesGroup = { getChildren: () => [proj], killAndHide: killSpy } as any;
+
+    combat.updateProjectiles(1 / 60);
+    expect(killSpy).toHaveBeenCalledWith(proj);
   });
 });
 

@@ -540,20 +540,30 @@ export class CombatSystem {
     proj.setDepth(15);
     (proj.body as Phaser.Physics.Arcade.Body).setEnable(true);
 
+    // store extra data for homing behaviour
     proj.setData("attackerId", attacker.data.id);
     proj.setData("damage", damage);
     proj.setData("team", attacker.data.team);
+    proj.setData("targetId", target.data.id);
+    proj.setData("speed", attacker.data.stats.projectileSpeed);
 
-    this.scene.physics.moveToObject(
-      proj,
-      target.sprite,
-      attacker.data.stats.projectileSpeed,
+    // give it an initial velocity toward the target
+    const angle = Phaser.Math.Angle.Between(
+      proj.x,
+      proj.y,
+      target.sprite.x,
+      target.sprite.y,
+    );
+    const speed = attacker.data.stats.projectileSpeed;
+    (proj.body as Phaser.Physics.Arcade.Body).setVelocity(
+      Math.cos(angle) * speed,
+      Math.sin(angle) * speed,
     );
 
-    // Auto-expire after 3 seconds in case the projectile misses
-    this.scene.time.delayedCall(3000, () => {
-      if (proj.active) this.projectilesGroup!.killAndHide(proj);
-    });
+    // use manual age-based expiration instead of delayedCall so we can
+    // update/clear during the homing logic; also this makes timing
+    // deterministic and tied to dt.  age measured in seconds.
+    proj.setData("age", 0);
   }
 
   // ── Utilities ──────────────────────────────────────────────────────────
@@ -561,6 +571,63 @@ export class CombatSystem {
   /** Typed shorthand for Arcade-physics velocity to avoid repeated casts. */
   private setVelocity(u: UnitEntry, vx: number, vy: number): void {
     (u.sprite.body as Phaser.Physics.Arcade.Body).setVelocity(vx, vy);
+  }
+
+  /**
+   * Update all active projectiles so they gradually steer toward their
+   * intended target.  This creates a curved, homing effect instead of a
+   * straight-line shot.  Only the designated target will ever be damaged
+   * (see `onProjectileHit` override in GameScene).
+   */
+  updateProjectiles(dt: number): void {
+    if (!this.projectilesGroup) return;
+
+    const turnRate = Math.PI; // radians per second (180°/s)
+    const maxAge = 3; // seconds before auto-expire
+
+    this.projectilesGroup.getChildren().forEach((child) => {
+      const proj = child as Phaser.Physics.Arcade.Sprite;
+      if (!proj.active) return;
+
+      // age-based expiration
+      let age = proj.getData("age") as number | undefined;
+      age = (age ?? 0) + dt;
+      proj.setData("age", age);
+      if (age >= maxAge) {
+        this.projectilesGroup!.killAndHide(proj);
+        return;
+      }
+
+      const targetId = proj.getData("targetId") as string | undefined;
+      const speed = proj.getData("speed") as number | undefined;
+      if (!targetId || speed == null) {
+        // no valid home info; let it travel un-steered
+        return;
+      }
+
+      const target = this.state.units.get(targetId);
+      if (!target || target.data.hp <= 0) {
+        // kill projectile when its target is gone; avoids stray bullets
+        this.projectilesGroup!.killAndHide(proj);
+        return;
+      }
+
+      const body = proj.body as Phaser.Physics.Arcade.Body;
+      const curVel = body.velocity;
+      const curAngle = Math.atan2(curVel.y, curVel.x);
+      const desiredAngle = Phaser.Math.Angle.Between(
+        proj.x,
+        proj.y,
+        target.sprite.x,
+        target.sprite.y,
+      );
+      const newAngle = Phaser.Math.Angle.RotateTo(
+        curAngle,
+        desiredAngle,
+        turnRate * dt,
+      );
+      body.setVelocity(Math.cos(newAngle) * speed, Math.sin(newAngle) * speed);
+    });
   }
 
   private findUnit(predicate: (d: UnitData) => boolean): UnitEntry | undefined {
