@@ -444,7 +444,6 @@ export class GameScene extends Phaser.Scene {
     )
       return;
 
-
     const dist = Math.hypot(
       clicked.sprite.x - heroA.sprite.x,
       clicked.sprite.y - heroA.sprite.y,
