@@ -285,8 +285,10 @@ export class CombatSystem {
 
     if (d.unitType === "hero") {
       d.attackCount++;
-      const effectiveSpeed = d.stats.attackSpeed * (d.rapidFireActive ? RAPID_FIRE_SPEED_MULT : 1);
-      const totalTime = (d.stats.baseAttackPoint + d.stats.baseBackswing) / effectiveSpeed;
+      const effectiveSpeed =
+        d.stats.attackSpeed * (d.rapidFireActive ? RAPID_FIRE_SPEED_MULT : 1);
+      const totalTime =
+        (d.stats.baseAttackPoint + d.stats.baseBackswing) / effectiveSpeed;
       u.sprite.play({ key: "anim-attack", frameRate: 5 / totalTime });
       // Laser Beam uses a pre-loaded attackTimer so the hit fires at attackPoint
       if (d.weapon?.id === "laser-beam" && d.attackCount % 4 === 0) {
@@ -627,6 +629,21 @@ export class CombatSystem {
         turnRate * dt,
       );
       body.setVelocity(Math.cos(newAngle) * speed, Math.sin(newAngle) * speed);
+
+      // if the projectile has essentially reached the target, register a hit
+      const distToTarget = Phaser.Math.Distance.Between(
+        proj.x,
+        proj.y,
+        target.sprite.x,
+        target.sprite.y,
+      );
+      if (distToTarget <= target.data.radius) {
+        const attackerId = proj.getData("attackerId") as string;
+        const damage = proj.getData("damage") as number;
+        this.applyDamageFromProjectile(attackerId, target, damage);
+        this.projectilesGroup!.killAndHide(proj);
+        return;
+      }
     });
   }
 

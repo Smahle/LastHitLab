@@ -13,8 +13,8 @@ vi.mock("phaser", () => ({
           Math.atan2(y2 - y1, x2 - x1),
         RotateTo: (from: number, to: number, max: number) => {
           // wrap difference to [-π, π]
-          const diff = ((((to - from) % (2 * Math.PI)) + 2 * Math.PI) %
-            (2 * Math.PI)) -
+          const diff =
+            ((((to - from) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)) -
             Math.PI;
           const amt = Math.sign(diff) * Math.min(Math.abs(diff), max);
           return from + amt;
@@ -73,7 +73,12 @@ function makeData(overrides: Partial<UnitData> = {}): UnitData {
 function makeEntry(data: UnitData): UnitEntry {
   return {
     data,
-    sprite: { x: 0, y: 0, play: vi.fn(), body: { setVelocity: vi.fn() } } as unknown as UnitEntry["sprite"],
+    sprite: {
+      x: 0,
+      y: 0,
+      play: vi.fn(),
+      body: { setVelocity: vi.fn() },
+    } as unknown as UnitEntry["sprite"],
   };
 }
 
@@ -96,7 +101,10 @@ function makeState(): GameState {
 }
 
 function makeEffects(): EffectsSystem {
-  return { addFloatingText: vi.fn(), addLaserBeam: vi.fn() } as unknown as EffectsSystem;
+  return {
+    addFloatingText: vi.fn(),
+    addLaserBeam: vi.fn(),
+  } as unknown as EffectsSystem;
 }
 
 function makeCombat(state: GameState, effects: EffectsSystem): CombatSystem {
@@ -182,7 +190,14 @@ describe("updateTimers (via updateUnit)", () => {
   it("activates Divine Shield when itemCooldown reaches zero", () => {
     const d = makeData({
       itemCooldown: 0.05,
-      armor: { id: "divine-shield", name: "", description: "", cost: 0, type: "armor", effect: "" },
+      armor: {
+        id: "divine-shield",
+        name: "",
+        description: "",
+        cost: 0,
+        type: "armor",
+        effect: "",
+      },
       shieldActive: false,
     });
     const u = makeEntry(d);
@@ -270,7 +285,10 @@ describe("projectile helpers", () => {
     } as any;
     state.units.set("tgt", targetEntry);
 
-    combat.projectilesGroup = { getChildren: () => [proj], killAndHide: vi.fn() } as any;
+    combat.projectilesGroup = {
+      getChildren: () => [proj],
+      killAndHide: vi.fn(),
+    } as any;
 
     combat.updateProjectiles(1 / 60);
 
@@ -301,7 +319,10 @@ describe("projectile helpers", () => {
     state.units.set("tgt", deadEntry);
 
     const killSpy = vi.fn();
-    combat.projectilesGroup = { getChildren: () => [proj], killAndHide: killSpy } as any;
+    combat.projectilesGroup = {
+      getChildren: () => [proj],
+      killAndHide: killSpy,
+    } as any;
 
     combat.updateProjectiles(1 / 60);
     expect(killSpy).toHaveBeenCalledWith(proj);
@@ -334,14 +355,19 @@ describe("applyDamageInstant", () => {
     const defData = makeData({ id: "b", hp: 100, shieldActive: true });
     const def = makeEntry(defData);
     combat.applyDamageInstant(atk, def, 999);
-    expect(defData.hp).toBe(100);         // no damage taken
+    expect(defData.hp).toBe(100); // no damage taken
     expect(defData.shieldActive).toBe(false);
     expect(defData.itemCooldown).toBeGreaterThan(0);
   });
 
   it("tracks last hits for team A hero killing an enemy creep", () => {
     const atk = makeData({ id: "hero-a", team: "A", unitType: "hero" });
-    const defData = makeData({ id: "creep-b", team: "B", unitType: "creep", hp: 1 });
+    const defData = makeData({
+      id: "creep-b",
+      team: "B",
+      unitType: "creep",
+      hp: 1,
+    });
     const def = makeEntry(defData);
     state.units.set(atk.id, makeEntry(atk));
     combat.applyDamageInstant(atk, def, 50);
@@ -350,10 +376,22 @@ describe("applyDamageInstant", () => {
 
   it("tracks denies for team A hero killing own creep", () => {
     const atk = makeData({ id: "hero-a", team: "A", unitType: "hero" });
-    const defData = makeData({ id: "creep-a", team: "A", unitType: "creep", hp: 1 });
+    const defData = makeData({
+      id: "creep-a",
+      team: "A",
+      unitType: "creep",
+      hp: 1,
+    });
     const def = makeEntry(defData);
     state.units.set(atk.id, makeEntry(atk));
     combat.applyDamageInstant(atk, def, 50);
     expect(state.denies).toBe(1);
+    // ensure denial floating text shown
+    expect(effects.addFloatingText).toHaveBeenCalledWith(
+      def.sprite.x,
+      def.sprite.y,
+      "!",
+      atk.team === "A" ? "#0096FF" : "#ff99ff",
+    );
   });
 });

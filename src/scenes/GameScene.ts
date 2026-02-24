@@ -2,7 +2,14 @@ import Phaser from "phaser";
 import { GAME_WIDTH, GAME_HEIGHT, PICK_MARGIN } from "../config/constants";
 import { HERO_STATS } from "../config/unitStats";
 import type { Stats } from "../config/unitStats";
-import type { GameState, Team, UnitType, UnitData, UnitEntry, Barrier } from "../types";
+import type {
+  GameState,
+  Team,
+  UnitType,
+  UnitData,
+  UnitEntry,
+  Barrier,
+} from "../types";
 import { EffectsSystem } from "../systems/EffectsSystem";
 import { CombatSystem } from "../systems/CombatSystem";
 import { WaveSystem } from "../systems/WaveSystem";
@@ -71,13 +78,19 @@ export class GameScene extends Phaser.Scene {
       shopOpen: false,
     };
 
-    this.add.image(GAME_WIDTH / 2, GAME_HEIGHT / 2, "bg")
+    this.add
+      .image(GAME_WIDTH / 2, GAME_HEIGHT / 2, "bg")
       .setDisplaySize(GAME_WIDTH, GAME_HEIGHT)
       .setDepth(-1);
 
     // ── Systems ─────────────────────────────────────────────────────────
     this.effects = new EffectsSystem(this, this.state);
-    this.combat = new CombatSystem(this, this.state, this.effects, this.projectilesGroup);
+    this.combat = new CombatSystem(
+      this,
+      this.state,
+      this.effects,
+      this.projectilesGroup,
+    );
     this.barrier = new BarrierSystem(this.state, this.effects);
     this.waves = new WaveSystem(this.state, (opts) => this.createUnit(opts));
     this.hud = new HUD(this, this.state);
@@ -110,7 +123,9 @@ export class GameScene extends Phaser.Scene {
     this.waves.start();
     this.hud.create(
       () => this.hud.toggleShop(),
-      () => { this.targetingMode = !this.targetingMode; },
+      () => {
+        this.targetingMode = !this.targetingMode;
+      },
     );
 
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
@@ -122,25 +137,41 @@ export class GameScene extends Phaser.Scene {
   private createAnimations() {
     this.anims.create({
       key: "anim-idle",
-      frames: this.anims.generateFrameNames("archmage", { prefix: "idle_", start: 0, end: 4 }),
+      frames: this.anims.generateFrameNames("archmage", {
+        prefix: "idle_",
+        start: 0,
+        end: 4,
+      }),
       frameRate: 5,
       repeat: -1,
     });
     this.anims.create({
       key: "anim-walk",
-      frames: this.anims.generateFrameNames("archmage", { prefix: "walk_", start: 0, end: 7 }),
+      frames: this.anims.generateFrameNames("archmage", {
+        prefix: "walk_",
+        start: 0,
+        end: 7,
+      }),
       frameRate: 8,
       repeat: -1,
     });
     this.anims.create({
       key: "anim-attack",
-      frames: this.anims.generateFrameNames("archmage", { prefix: "attack_", start: 0, end: 4 }),
+      frames: this.anims.generateFrameNames("archmage", {
+        prefix: "attack_",
+        start: 0,
+        end: 4,
+      }),
       frameRate: 8,
       repeat: 0,
     });
     this.anims.create({
       key: "anim-death",
-      frames: this.anims.generateFrameNames("archmage", { prefix: "death_", start: 0, end: 7 }),
+      frames: this.anims.generateFrameNames("archmage", {
+        prefix: "death_",
+        start: 0,
+        end: 7,
+      }),
       frameRate: 8,
       repeat: 0,
     });
@@ -202,7 +233,12 @@ export class GameScene extends Phaser.Scene {
       rapidFireDuration: 0,
     };
 
-    const sprite = this.physics.add.sprite(opts.x, opts.y, "archmage", "idle_0");
+    const sprite = this.physics.add.sprite(
+      opts.x,
+      opts.y,
+      "archmage",
+      "idle_0",
+    );
 
     // Set up circular physics body for all units
     const body = sprite.body as Phaser.Physics.Arcade.Body;
@@ -226,9 +262,14 @@ export class GameScene extends Phaser.Scene {
       body.setImmovable(true);
     } else {
       const isRanged = opts.stats.attackRange > 100;
-      const tint = opts.team === "A"
-        ? (isRanged ? 0x1faf3a : 0x6ee76e)
-        : (isRanged ? 0xc81e1e : 0xff6b6b);
+      const tint =
+        opts.team === "A"
+          ? isRanged
+            ? 0x1faf3a
+            : 0x6ee76e
+          : isRanged
+            ? 0xc81e1e
+            : 0xff6b6b;
       sprite.setScale(0.2).setDepth(5).setTint(tint);
       sprite.play("anim-walk");
       if (opts.team === "B") sprite.setFlipX(true);
@@ -238,8 +279,12 @@ export class GameScene extends Phaser.Scene {
 
     const barW = opts.radius * 2;
     this.state.hpBars.set(opts.id, {
-      bg: this.add.rectangle(opts.x, opts.y - opts.radius - 6, barW, 4, 0x333333).setDepth(20),
-      fg: this.add.rectangle(opts.x, opts.y - opts.radius - 6, barW, 4, 0x4caf50).setDepth(21),
+      bg: this.add
+        .rectangle(opts.x, opts.y - opts.radius - 6, barW, 4, 0x333333)
+        .setDepth(20),
+      fg: this.add
+        .rectangle(opts.x, opts.y - opts.radius - 6, barW, 4, 0x4caf50)
+        .setDepth(21),
     });
     this.state.units.set(opts.id, { sprite, data });
   }
@@ -247,16 +292,28 @@ export class GameScene extends Phaser.Scene {
   private spawnHeroes() {
     const heroSize = 28 * 3;
     this.createUnit({
-      id: "hero-A", team: "A", unitType: "hero",
-      x: heroSize / 2 + 14, y: GAME_HEIGHT - heroSize / 2 - 14,
-      hp: 1100, maxHp: 1100, radius: 28,
-      stats: { ...HERO_STATS }, gold: 500,
+      id: "hero-A",
+      team: "A",
+      unitType: "hero",
+      x: heroSize / 2 + 14,
+      y: GAME_HEIGHT - heroSize / 2 - 14,
+      hp: 1100,
+      maxHp: 1100,
+      radius: 28,
+      stats: { ...HERO_STATS },
+      gold: 500,
     });
     this.createUnit({
-      id: "hero-B", team: "B", unitType: "hero",
-      x: GAME_WIDTH - heroSize / 2 - 14, y: heroSize / 2 + 14,
-      hp: 1100, maxHp: 1100, radius: 28,
-      stats: { ...HERO_STATS }, gold: 500,
+      id: "hero-B",
+      team: "B",
+      unitType: "hero",
+      x: GAME_WIDTH - heroSize / 2 - 14,
+      y: heroSize / 2 + 14,
+      hp: 1100,
+      maxHp: 1100,
+      radius: 28,
+      stats: { ...HERO_STATS },
+      gold: 500,
     });
   }
 
@@ -367,7 +424,12 @@ export class GameScene extends Phaser.Scene {
       if (clicked.data.team === "A") {
         clicked.data.shieldActive = true;
         heroA.data.itemCooldown = 35;
-        this.effects.addFloatingText(clicked.sprite.x, clicked.sprite.y - 30, "SHIELD!", "#FFD700");
+        this.effects.addFloatingText(
+          clicked.sprite.x,
+          clicked.sprite.y - 30,
+          "SHIELD!",
+          "#FFD700",
+        );
         this.targetingMode = false;
       }
       return;
@@ -375,9 +437,18 @@ export class GameScene extends Phaser.Scene {
 
     const target = clicked.data;
     if (target.id === "hero-A") return;
-    if (target.team === "A" && target.unitType === "creep" && target.hp > target.maxHp * 0.5) return;
+    if (
+      target.team === "A" &&
+      target.unitType === "creep" &&
+      target.hp > target.maxHp * 0.5
+    )
+      return;
 
-    const dist = Math.hypot(clicked.sprite.x - heroA.sprite.x, clicked.sprite.y - heroA.sprite.y);
+
+    const dist = Math.hypot(
+      clicked.sprite.x - heroA.sprite.x,
+      clicked.sprite.y - heroA.sprite.y,
+    );
     const edgeDist = dist - heroA.data.radius - target.radius;
 
     if (edgeDist <= heroA.data.stats.attackRange) {
@@ -400,9 +471,14 @@ export class GameScene extends Phaser.Scene {
       const ratio = Math.max(0, u.data.hp / u.data.maxHp);
       const w = u.data.radius * 2;
       bar.bg.setPosition(u.sprite.x, u.sprite.y - u.data.radius - 6);
-      bar.fg.setPosition(u.sprite.x - (w * (1 - ratio)) / 2, u.sprite.y - u.data.radius - 6);
+      bar.fg.setPosition(
+        u.sprite.x - (w * (1 - ratio)) / 2,
+        u.sprite.y - u.data.radius - 6,
+      );
       bar.fg.setDisplaySize(w * ratio, 4);
-      bar.fg.setFillStyle(ratio > 0.5 ? 0x4caf50 : ratio > 0.25 ? 0xff9800 : 0xf44336);
+      bar.fg.setFillStyle(
+        ratio > 0.5 ? 0x4caf50 : ratio > 0.25 ? 0xff9800 : 0xf44336,
+      );
     });
   }
 
@@ -417,7 +493,10 @@ export class GameScene extends Phaser.Scene {
         // sprite.destroy() also removes the body from all physics groups
         u.sprite.destroy();
         const bar = this.state.hpBars.get(id);
-        if (bar) { bar.bg.destroy(); bar.fg.destroy(); }
+        if (bar) {
+          bar.bg.destroy();
+          bar.fg.destroy();
+        }
         this.state.hpBars.delete(id);
       }
       this.state.units.delete(id);
