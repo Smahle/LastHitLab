@@ -11,7 +11,9 @@
       "Bash(npx tsc:*)",
       "Bash(where git)",
       "Bash(git --version)",
-      "Bash(git --exec-path)"
+      "Bash(git --exec-path)",
+      "Bash(git stash)",
+      "Bash(git stash pop)"
     ]
   }
 }

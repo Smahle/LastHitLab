@@ -540,7 +540,12 @@ export class CombatSystem {
     proj.setActive(true).setVisible(true);
     proj.setTint(color);
     proj.setDepth(15);
-    (proj.body as Phaser.Physics.Arcade.Body).setEnable(true);
+
+    const body = proj.body as Phaser.Physics.Arcade.Body;
+    body.setEnable(true);
+    // reset arc state from any previous pool use
+    body.setGravityY(0);
+    proj.setData("curveType", null);
 
     // store extra data for homing behaviour
     proj.setData("attackerId", attacker.data.id);
@@ -549,18 +554,36 @@ export class CombatSystem {
     proj.setData("targetId", target.data.id);
     proj.setData("speed", attacker.data.stats.projectileSpeed);
 
-    // give it an initial velocity toward the target
-    const angle = Phaser.Math.Angle.Between(
-      proj.x,
-      proj.y,
-      target.sprite.x,
-      target.sprite.y,
-    );
     const speed = attacker.data.stats.projectileSpeed;
-    (proj.body as Phaser.Physics.Arcade.Body).setVelocity(
-      Math.cos(angle) * speed,
-      Math.sin(angle) * speed,
-    );
+    const isArc =
+      attacker.data.unitType === "creep" &&
+      attacker.data.stats.projectileSpeed > 0;
+
+    if (isArc) {
+      const ARC_HEIGHT = 60;
+      const dx = target.sprite.x - proj.x;
+      const dy = target.sprite.y - proj.y;
+      const dist = Math.hypot(dx, dy);
+      const flightTime = dist / speed;
+
+      const gravity = (8 * ARC_HEIGHT) / (flightTime * flightTime);
+      const arcVy = -(4 * ARC_HEIGHT) / flightTime;
+
+      body.setVelocity(dx / flightTime, dy / flightTime + arcVy);
+      body.setGravityY(gravity);
+      proj.setData("curveType", "arc");
+      proj.setData("flightTime", flightTime);
+      proj.setData("arcGravity", gravity);
+    } else {
+      // give it an initial velocity toward the target
+      const angle = Phaser.Math.Angle.Between(
+        proj.x,
+        proj.y,
+        target.sprite.x,
+        target.sprite.y,
+      );
+      body.setVelocity(Math.cos(angle) * speed, Math.sin(angle) * speed);
+    }
 
     // use manual age-based expiration instead of delayedCall so we can
     // update/clear during the homing logic; also this makes timing
@@ -596,7 +619,46 @@ export class CombatSystem {
       age = (age ?? 0) + dt;
       proj.setData("age", age);
       if (age >= maxAge) {
+        (proj.body as Phaser.Physics.Arcade.Body).setGravityY(0);
         this.projectilesGroup!.killAndHide(proj);
+        return;
+      }
+
+      // arc projectiles: re-aim each frame using kinematics so the arc
+      // tracks the moving target while preserving the parabolic shape.
+      if (proj.getData("curveType") === "arc") {
+        const flightTime = (proj.getData("flightTime") as number) ?? maxAge;
+        const arcGravity = proj.getData("arcGravity") as number;
+        const tRem = flightTime - age;
+
+        const arcTargetId = proj.getData("targetId") as string | undefined;
+        const arcTarget = arcTargetId
+          ? this.state.units.get(arcTargetId)
+          : undefined;
+
+        if (!arcTarget || arcTarget.data.hp <= 0) {
+          (proj.body as Phaser.Physics.Arcade.Body).setGravityY(0);
+          this.projectilesGroup!.killAndHide(proj);
+          return;
+        }
+
+        if (tRem > 0.05) {
+          // recompute velocity so the arc always lands on the target
+          const arcBody = proj.body as Phaser.Physics.Arcade.Body;
+          const dx = arcTarget.sprite.x - proj.x;
+          const dy = arcTarget.sprite.y - proj.y;
+          arcBody.setVelocity(
+            dx / tRem,
+            dy / tRem - 0.5 * arcGravity * tRem,
+          );
+        } else {
+          // close enough — register hit manually
+          const attackerId = proj.getData("attackerId") as string;
+          const damage = proj.getData("damage") as number;
+          this.applyDamageFromProjectile(attackerId, arcTarget, damage);
+          (proj.body as Phaser.Physics.Arcade.Body).setGravityY(0);
+          this.projectilesGroup!.killAndHide(proj);
+        }
         return;
       }
 
