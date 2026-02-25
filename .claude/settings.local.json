@@ -8,7 +8,10 @@
       "Bash(git commit:*)",
       "Bash(git push:*)",
       "Bash(git remote add:*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(where git)",
+      "Bash(git --version)",
+      "Bash(git --exec-path)"
     ]
   }
 }
